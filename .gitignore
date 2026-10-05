@@ -1,0 +1,25 @@
+# KiCad: backups, locks, autosaves and per-user view state
+Somfy-backups/
+*-backups/
+*.lck
+_autosave-*
+*.kicad_prl
+fp-info-cache
+*.bak
+
+# macOS
+.DS_Store
+
+# Python / tooling
+__pycache__/
+.venv/
+.tmp-*/
+.tmp-*
+
+# Fabrication exports (regenerate from KiCad with the JLCPCB plugin)
+jlcpcb/
+
+# Vendor 3D model (SnapEDA/DigiKey terms - download it yourself, see README) and the
+# board STEP export that embeds it
+3dshapes/ESP32-DevKitC-32D.step
+case/Somfy-pcb.step
