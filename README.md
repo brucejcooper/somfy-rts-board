@@ -84,7 +84,7 @@ dependencies, so there is nothing to install or activate:
 ```sh
 uv run case/view.py         # live 3D view in the browser; rebuilds whenever make_case.py is saved
 uv run case/make_case.py    # build the parts -> case/SomfyCase-{body,lid}.{step,stl}
-uv run case/check_case.py   # board insertion sweep, wall thickness, overhangs, solid validity
+uv run case/check_case.py   # insertion sweep, measurements vs board, wall thickness, overhangs, validity
 uv run case/render_case.py  # PNG renders into case/renders/ (needs F3D: brew install f3d)
 ```
 

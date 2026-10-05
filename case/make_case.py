@@ -4,7 +4,8 @@
 # ///
 # Parametric slide-in case for the Somfy base board (ESP32-DevKitC + E07 CC1101).
 # Run with:  uv run case/make_case.py [output folder]
-#   Live view:  open -a FreeCAD --args "$PWD/case/live_view.py"  (rebuilds and reloads whenever this file is saved)
+#   Live view:  uv run case/view.py   (browser viewer; rebuilds whenever this file is saved)
+#   Checks:     uv run case/check_case.py   (fit, wall thickness, overhangs, measurements)
 #   uv reads the dependencies above and manages the environment itself - nothing to install or activate.
 #
 # Clearances are sized for JLC3DP MJF nylon (about +/-0.3 mm).
@@ -29,7 +30,8 @@ PCB_L = 48.057          # board length (Y)
 PCB_T = 1.6             # board thickness incl. mask
 RAIL = 2.5              # copper/part-free strip along each side edge (KiCad keepout)
 
-# ---- component envelope (measured from the STEP export) ----
+# ---- component envelope (measured from case/Somfy-pcb.step) ----
+# check_case.py re-measures these from the board export and reports any that have gone stale.
 TOP_MAX = 8.29          # tallest part above the PCB underside (WROOM shield)
 BOT_MIN = -4.41         # DevKitC pin tails (clip them and you can shrink BACK_CLR)
 ANT_YMAX = 54.28        # ESP32 antenna tip, past the top board edge
@@ -63,7 +65,20 @@ CSK_D = 5.2             # M2.5 countersunk head 4.7 + clearance, 90 deg
 CSK_RELIEF = 0.0        # straight section at the countersink mouth; 0 for JLC3DP MJF (their checker flags it), 0.3 for home FDM printing face down
 SCREW_DEPTH = 10.0
 SCREW_INSET = 4.7       # screw centre from the outer side face: countersink 2.1 mm from the lid edge
-FILLET = 2.0
+FILLET = 2.0            # radius of the four long outer edges
+SCREW_TOP_DROP = 3.0    # upper screws sit this far below the front wall's inner face (2.4 mm countersink-to-edge)
+LEAD_IN = 0.8           # 45 deg flare at the groove mouths so the board finds the slot
+USB_CUT_R = 1.5         # corner radius of the USB opening
+SMA_CUT_R = 0.6         # corner radius of the SMA opening
+# lid prongs press on the top board edge at both corners
+PRONG_ANT_CLEAR_L = 3.0 # left prong stops this far short of the antenna
+PRONG_ANT_CLEAR_R = 7.0 # right prong starts this far past the antenna (also clears the DevKitC board edge, x ~32.3)
+PRONG_BELOW = 1.2       # prongs reach this far below the board underside...
+PRONG_TOP_GAP = 0.2     # ...and stop this far below the board's top surface, clear of the header plastic
+
+# modelling tolerances (not design dimensions)
+EPS = 0.01              # cutting tools overlap the faces they cut by this, to avoid zero-thickness slivers
+THRU = 1.0              # cutting tools run this far past the material so they always cut through
 
 # derived
 X_IN0, X_IN1 = BITE, PCB_W - BITE                    # inner side faces
@@ -75,7 +90,7 @@ Y_IN0 = -EDGE_STOP
 Y_OUT0 = Y_IN0 - BOTTOM_WALL
 Y_TOP = ANT_YMAX + END_CLR                           # open end of the body
 SCREW_X = X_OUT0 + SCREW_INSET, X_OUT1 - SCREW_INSET
-SCREW_Z = (Z_IN1 - 3.0, Z_OUT0 + CSK_EDGE + CSK_D / 2)  # clear of the groove band
+SCREW_Z = (Z_IN1 - SCREW_TOP_DROP, Z_OUT0 + CSK_EDGE + CSK_D / 2)  # upper, lower; both clear of the groove band
 
 ALONG_Y, AGAINST_Y = Vector(0, 1, 0), Vector(0, -1, 0)
 
@@ -104,7 +119,7 @@ def fillet_long_edges(shape, r):
     edges = []
     for e in shape.edges():
         p = e.position_at(0)
-        if (y_parallel(e) and e.length > 1
+        if (y_parallel(e) and e.length > 1   # skip tiny edges left by other features
                 and min(abs(p.X - X_OUT0), abs(p.X - X_OUT1)) < 1e-3
                 and min(abs(p.Z - Z_OUT0), abs(p.Z - Z_OUT1)) < 1e-3):
             edges.append(e)
@@ -122,46 +137,46 @@ def xz_rect(x0, x1, z0, z1, y):
 # ---- body ----
 body = box(X_OUT0, X_OUT1, Y_OUT0, Y_TOP, Z_OUT0, Z_OUT1)
 body = fillet_long_edges(body, FILLET)
-body -= box(X_IN0, X_IN1, Y_IN0, Y_TOP + 1, Z_IN0, Z_IN1)
-for gx0, gx1 in ((-GROOVE_CLR, X_IN0 + 0.01), (X_IN1 - 0.01, PCB_W + GROOVE_CLR)):
-    body -= box(gx0, gx1, 0.0, Y_TOP + 1, -GROOVE_GAP, PCB_T + GROOVE_GAP)
-# lead-in at the groove mouths so the board finds the slot (45 deg flare, 0.8 mm)
+body -= box(X_IN0, X_IN1, Y_IN0, Y_TOP + THRU, Z_IN0, Z_IN1)
+for gx0, gx1 in ((-GROOVE_CLR, X_IN0 + EPS), (X_IN1 - EPS, PCB_W + GROOVE_CLR)):
+    body -= box(gx0, gx1, 0.0, Y_TOP + THRU, -GROOVE_GAP, PCB_T + GROOVE_GAP)
+# lead-in at the groove mouths so the board finds the slot
 for gx in (-GROOVE_CLR, PCB_W + GROOVE_CLR):
     inner = X_IN0 if gx < 0 else X_IN1
     lo, hi = sorted((gx, inner))
-    bot = xz_rect(lo, hi, -GROOVE_GAP, PCB_T + GROOVE_GAP, Y_TOP + 0.01 - 0.81)
-    top = xz_rect(lo, hi, -GROOVE_GAP - 0.8, PCB_T + GROOVE_GAP + 0.8, Y_TOP + 0.01)
+    bot = xz_rect(lo, hi, -GROOVE_GAP, PCB_T + GROOVE_GAP, Y_TOP + EPS - (LEAD_IN + EPS))
+    top = xz_rect(lo, hi, -GROOVE_GAP - LEAD_IN, PCB_T + GROOVE_GAP + LEAD_IN, Y_TOP + EPS)
     body -= Solid.make_loft([bot, top], ruled=True)
 # USB and SMA openings through the bottom wall
 # USB opening is clipped at the front wall's inner face so it leaves no bridge when printed upright
-usb_cut = rounded_rect_prism(USB_C[0], USB_C[1], USB_CUT[0], USB_CUT[1], 1.5, Y_OUT0 - 1, Y_IN0 + 0.01)
-body -= usb_cut & box(X_OUT0, X_OUT1, Y_OUT0 - 2, Y_IN0 + 1, Z_OUT0, Z_IN1)
-body -= rounded_rect_prism(SMA_C[0], SMA_C[1], SMA_CUT, SMA_CUT, 0.6, Y_OUT0 - 1, Y_IN0 + 0.01)
+usb_cut = rounded_rect_prism(USB_C[0], USB_C[1], USB_CUT[0], USB_CUT[1], USB_CUT_R, Y_OUT0 - THRU, Y_IN0 + EPS)
+body -= usb_cut & box(X_OUT0, X_OUT1, Y_OUT0 - 2 * THRU, Y_IN0 + THRU, Z_OUT0, Z_IN1)
+body -= rounded_rect_prism(SMA_C[0], SMA_C[1], SMA_CUT, SMA_CUT, SMA_CUT_R, Y_OUT0 - THRU, Y_IN0 + EPS)
 # lid screw pilot holes in the side walls
 for sx in SCREW_X:
     for sz in SCREW_Z:
-        body -= Solid.make_cylinder(SCREW_PILOT / 2, SCREW_DEPTH + 0.01, along(AGAINST_Y, sx, Y_TOP + 0.01, sz))
+        body -= Solid.make_cylinder(SCREW_PILOT / 2, SCREW_DEPTH + EPS, along(AGAINST_Y, sx, Y_TOP + EPS, sz))
 body = body.clean()
 
 # ---- lid ----
 lid = box(X_OUT0, X_OUT1, Y_TOP, Y_TOP + LID_T, Z_OUT0, Z_OUT1)
 lid = fillet_long_edges(lid, FILLET)
-lip_outer = box(X_IN0 + FIT, X_IN1 - FIT, Y_TOP - LIP_DEPTH, Y_TOP + 0.01, Z_IN0 + FIT, Z_IN1 - FIT)
-lip_inner = box(X_IN0 + FIT + LIP_T, X_IN1 - FIT - LIP_T, Y_TOP - LIP_DEPTH - 1, Y_TOP + 0.02,
+lip_outer = box(X_IN0 + FIT, X_IN1 - FIT, Y_TOP - LIP_DEPTH, Y_TOP + EPS, Z_IN0 + FIT, Z_IN1 - FIT)
+lip_inner = box(X_IN0 + FIT + LIP_T, X_IN1 - FIT - LIP_T, Y_TOP - LIP_DEPTH - THRU, Y_TOP + 2 * EPS,
                 Z_IN0 + FIT + LIP_T, Z_IN1 - FIT - LIP_T)
 lid += lip_outer - lip_inner
 # hold-down prongs that rest on the top board edge at both corners, away from the antenna
-PRONG_Z = (-1.2, PCB_T - 0.2)
-for px0, px1 in ((X_IN0 + FIT, ANT_X[0] - 3.0), (ANT_X[1] + 7.0, X_IN1 - FIT)):
-    lid += box(px0, px1, PCB_L + PRONG_GAP, Y_TOP + 0.01, *PRONG_Z)
+PRONG_Z = (-PRONG_BELOW, PCB_T - PRONG_TOP_GAP)
+for px0, px1 in ((X_IN0 + FIT, ANT_X[0] - PRONG_ANT_CLEAR_L), (ANT_X[1] + PRONG_ANT_CLEAR_R, X_IN1 - FIT)):
+    lid += box(px0, px1, PCB_L + PRONG_GAP, Y_TOP + EPS, *PRONG_Z)
 csk_h = (CSK_D - SCREW_CLEAR) / 2
 for sx in SCREW_X:
     for sz in SCREW_Z:
-        lid -= Solid.make_cylinder(SCREW_CLEAR / 2, LID_T + 2, along(ALONG_Y, sx, Y_TOP - 1, sz))
-        lid -= Solid.make_cone(SCREW_CLEAR / 2, CSK_D / 2 + 0.01, csk_h + 0.01,
+        lid -= Solid.make_cylinder(SCREW_CLEAR / 2, LID_T + 2 * THRU, along(ALONG_Y, sx, Y_TOP - THRU, sz))
+        lid -= Solid.make_cone(SCREW_CLEAR / 2, CSK_D / 2 + EPS, csk_h + EPS,
                                along(ALONG_Y, sx, Y_TOP + LID_T - CSK_RELIEF - csk_h, sz))
         if CSK_RELIEF > 0:
-            lid -= Solid.make_cylinder(CSK_D / 2, CSK_RELIEF + 0.01,
+            lid -= Solid.make_cylinder(CSK_D / 2, CSK_RELIEF + EPS,
                                        along(ALONG_Y, sx, Y_TOP + LID_T - CSK_RELIEF, sz))
 lid = lid.clean()
 
@@ -189,7 +204,7 @@ print('closed case %.2f x %.2f x %.2f mm' % (ob.size.X, ob.size.Y + LID_T, ob.si
 # ---- save ----
 os.makedirs(OUT, exist_ok=True)
 for name, shp in (('body', body), ('lid', lid)):
-    # written under a temporary name and swapped in, so live_view.py never reads a half-written file
+    # written under a temporary name and swapped in, so nothing ever reads a half-written file
     for ext, writer in (('stl', lambda f: export_stl(shp, f, tolerance=0.05)), ('step', lambda f: export_step(shp, f))):
         final = os.path.join(OUT, 'SomfyCase-%s.%s' % (name, ext))
         tmp = os.path.join(OUT, '.tmp-SomfyCase-%s.%s' % (name, ext))
